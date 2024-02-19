@@ -1,3 +1,5 @@
+# python Run.py --prototxt mobilenet_ssd/MobileNetSSD_deploy.prototxt --model mobilenet_ssd/MobileNetSSD_deploy.caffemodel
+
 from mylib.centroidtracker import CentroidTracker
 from mylib.trackableobject import TrackableObject
 from imutils.video import VideoStream
@@ -10,6 +12,14 @@ import argparse, imutils
 import time, dlib, cv2, datetime
 from itertools import zip_longest
 import datetime
+
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import firestore
+
+cred = credentials.Certificate("arminnovators-e1fb9-firebase-adminsdk-cv698-20460a9f9b.json")
+firebase_admin.initialize_app(cred)
+
 
 t0 = time.time()
 
@@ -73,6 +83,15 @@ def run():
 	empty=[]
 	empty1=[]
 
+	db = firestore.client()
+	bus_collection = db.collection('bus tracker')  # Change to your desired collection name
+
+	# Define the document name
+	bus_name = "passCount"
+
+	update_interval = 3  # Update every 3 seconds
+	last_update_time = time.time()
+
 
 	fps = FPS().start()
 
@@ -81,6 +100,8 @@ def run():
 
 
 	while True:
+
+		current_time = time.time()
 
 		frame = vs.read()
 		frame = frame[1] if args.get("input", False) else frame
@@ -167,8 +188,8 @@ def run():
 
 				rects.append((startX, startY, endX, endY))
 
-
-		cv2.line(frame, (0, H // 2), (W, H // 2), (0, 0, 0), 3)
+		#line dimensions in the image
+		cv2.line(frame, (W // 3, H // 2), ((2*W) // 3, H // 2), (0, 0, 0), 3)
 		cv2.putText(frame, "-Prediction border - Entrance-", (10, H - ((i * 20) + 200)),
 			cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
 		cv2.putText(frame, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"),
@@ -210,7 +231,7 @@ def run():
 						x = []
 
 						x.append(len(empty1)-len(empty))
-						#print("Total people inside:", x)
+						print("Total people inside:", x)
 
 						if sum(x) >= config.Threshold:
 							cv2.putText(frame, "-ALERT: People limit exceeded-", (10, frame.shape[0] - 80),
@@ -252,16 +273,27 @@ def run():
 			text = "{}: {}".format(k, v)
 			cv2.putText(frame, text, (265, H - ((i * 20) + 60)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-		if config.Log:
-			datetimee = [datetime.datetime.now()]
-			d = [datetimee, empty1, empty, x]
-			export_data = zip_longest(*d, fillvalue = '')
+		# Check if it's time to update the database (every 3 seconds)
+		if current_time - last_update_time >= update_interval:
+			# Only update the passenger count if valid passengers are detected
+			if sum(x) > 0:
+				# Update the passenger count in Firebase Firestore
+				bus_doc_ref = bus_collection.document(bus_name)
+				bus_doc = bus_doc_ref.get()
 
-			with open('Log.csv', 'w', newline='') as myfile:
-				wr = csv.writer(myfile, quoting=csv.QUOTE_ALL)
-				wr.writerow(("End Time", "In", "Out", "Total Inside"))
-				wr.writerows(export_data)
+				passenger_count = int(sum(x))
 
+				if bus_doc.exists:
+					# If the document exists, update the passenger count with the new value
+					bus_doc_ref.update({'bus_route': 'test1',
+						 'passenger': passenger_count})
+				else:
+					# If the document doesn't exist, set the passenger count to the new value
+					bus_doc_ref.set({'bus_route': 'test1',
+						 'passenger': passenger_count})
+					
+				last_update_time = current_time
+		
 
 
 		cv2.imshow("Real-Time Monitoring/Analysis Window", frame)
